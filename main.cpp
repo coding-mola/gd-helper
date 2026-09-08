@@ -1,12 +1,12 @@
 /**
  * Grim Dawn 한글 입력 도우미 (Grim Dawn Hangeul Helper)
  * 
- * [안정성 극대화 픽스 내역]
- * 1. 클립보드 복원 루틴 완전 제거: 타이밍 경합 및 붙여넣기 실패 원천 차단
- * 2. Ctrl + V 키 입력 딜레이(25ms) 부여: 다이렉트X 'v' 오타 입력 완벽 해결
- * 3. AttachThreadInput 제거: 윈도우 키 상태 리셋 부작용 제거 및 안전한 창 전환
- * 4. Windows 10/11 IME 강제 열기 및 한글 모드 유지
- * 5. 입력창 활성화 시 단축키 해제로 자유로운 한/영 키 전환 지원
+ * [v1.6 타이밍 및 IME 완전 안정화 픽스]
+ * 1. 게임 일시정지(Auto-Pause) 해제 안전 마진 확보 (Sleep 120ms 부여)
+ * 2. 복귀 시 게임 창 IME를 영문(Alphanumeric)으로 강제 초기화하여 좌상단 고스트 입력기 원천 차단
+ * 3. 창 복귀 즉시 단축키(한/영 키) 강제 재등록으로 다회 연속 호출 100% 보장
+ * 4. 클립보드 복원 루틴 제거 및 하드웨어 스캔 코드(25ms) Ctrl + V 전송
+ * 5. 게임 프로세스 종료 시 도우미 자동 종료
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -45,6 +45,9 @@ bool g_bHotkeyWarnedOnce = false;
 
 // 게임 프로세스 감시 핸들
 HANDLE g_hGameProcess = NULL;
+
+// 전방 선언
+void UpdateHotkeyState(HWND hForeground);
 
 // 클립보드 쓰기 (경합 방지 5회 재시도)
 bool SetClipboardUnicodeText(HWND hWnd, const std::wstring& text) {
@@ -156,7 +159,7 @@ bool IsTargetGameWindow(HWND hwnd) {
 void UpdateHotkeyState(HWND hForeground) {
     if (!g_hWnd) return;
 
-    // 도우미 입력창 자체가 활성화되어 있을 때는 단축키를 꺼서 한/영 키를 입력창이 온전히 쓰도록 보장
+    // 도우미 입력창 자체가 활성화되어 있을 때는 단축키를 해제하여 한/영 키를 입력창이 온전히 쓰도록 함
     if (hForeground == g_hWnd) {
         if (g_bHotkeyRegistered) {
             UnregisterHotKey(g_hWnd, HOTKEY_ID);
@@ -198,7 +201,7 @@ void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND hwnd, LONG, LONG, DW
     }
 }
 
-// 한글 입력 모드 강력 고정 (Windows 10/11 대응)
+// 한글 입력 모드 강력 고정 (도우미 창 열릴 때)
 void ForceHangeulMode(HWND hEdit) {
     HKL hHangeulLayout = LoadKeyboardLayoutW(L"00000412", KLF_ACTIVATE);
     if (hHangeulLayout) {
@@ -227,23 +230,43 @@ void ForceHangeulMode(HWND hEdit) {
     }
 }
 
-// 게임 창으로 포커스 안전 복귀 및 키 주입
+// 게임 창으로 안전 복귀, 영문 모드 초기화 및 텍스트 주입
 void PasteTextToGame(const std::wstring& text) {
     if (!g_hTargetGame || !IsWindow(g_hTargetGame)) return;
 
-    // 1. 도우미 창 먼저 숨기기
+    // 1. 도우미 창 숨기기
     ShowWindow(g_hWnd, SW_HIDE);
 
-    // 2. 게임 창으로 포커스 복귀
+    // 2. 도우미 입력창의 IME를 닫고 영문으로 리셋 (게임으로의 한글 모드 전염 차단)
+    if (g_hEdit && IsWindow(g_hEdit)) {
+        HIMC hImc = ImmGetContext(g_hEdit);
+        if (hImc) {
+            ImmSetConversionStatus(hImc, 0, 0);
+            ImmSetOpenStatus(hImc, FALSE);
+            ImmReleaseContext(g_hEdit, hImc);
+        }
+    }
+
+    // 3. 게임 창으로 포커스 복귀
     SetForegroundWindow(g_hTargetGame);
 
-    // 내용이 없으면 포커스만 복귀하고 종료
+    // 4. 게임 창의 기본 IME 입력기를 '영문 모드'로 강제 설정 (화면 좌상단 고스트 입력기 박스 원천 차단)
+    HWND hGameIme = ImmGetDefaultIMEWnd(g_hTargetGame);
+    if (hGameIme) {
+        SendMessageW(hGameIme, WM_IME_CONTROL, IMC_SETCONVERSIONMODE, 0);
+        SendMessageW(hGameIme, WM_IME_CONTROL, IMC_SETOPENSTATUS, FALSE);
+    }
+
+    // 5. 창 복귀 즉시 단축키(한/영 키) 강제 재등록 (2번째 호출 100% 보장)
+    UpdateHotkeyState(g_hTargetGame);
+
+    // 내용이 없으면 포커스만 복귀하고 깔끔히 종료
     if (text.empty()) return;
 
-    // 3. 클립보드에 새 텍스트 주입 (복원 로직 완전 제거로 안정성 100% 확보)
+    // 6. 클립보드에 새 텍스트 주입
     if (!SetClipboardUnicodeText(g_hWnd, text)) return;
 
-    // 4. 게임 창 활성화 대기 (최대 300ms)
+    // 7. 게임 창 활성화 대기 (최대 300ms)
     DWORD targetPid = 0;
     GetWindowThreadProcessId(g_hTargetGame, &targetPid);
     for (int i = 0; i < 15; ++i) {
@@ -252,9 +275,11 @@ void PasteTextToGame(const std::wstring& text) {
         if (fgPid == targetPid) break;
         Sleep(20);
     }
-    Sleep(50); // 게임 내부 입력 포커스 안착 대기
 
-    // 5. 다이렉트X 인식용 하드웨어 스캔 코드 + 시간 지연(25ms) Ctrl + V 전송
+    // 8. [핵심] 게임의 백그라운드 일시정지 해제 및 UI 검색창 텍스트 포커스 안착을 위한 안전 마진 (120ms)
+    Sleep(120);
+
+    // 9. 다이렉트X 인식용 하드웨어 스캔 코드 + 시간 지연(25ms) Ctrl + V 전송
     // Ctrl Down
     keybd_event(VK_CONTROL, 0x1D, 0, 0);
     Sleep(25);
@@ -299,6 +324,12 @@ LRESULT CALLBACK EditSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
             ShowWindow(g_hWnd, SW_HIDE);
             if (g_hTargetGame && IsWindow(g_hTargetGame)) {
                 SetForegroundWindow(g_hTargetGame);
+                HWND hGameIme = ImmGetDefaultIMEWnd(g_hTargetGame);
+                if (hGameIme) {
+                    SendMessageW(hGameIme, WM_IME_CONTROL, IMC_SETCONVERSIONMODE, 0);
+                    SendMessageW(hGameIme, WM_IME_CONTROL, IMC_SETOPENSTATUS, FALSE);
+                }
+                UpdateHotkeyState(g_hTargetGame);
             }
             return 0;
         }
@@ -416,6 +447,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_ACTIVATE: {
         if (LOWORD(wParam) == WA_INACTIVE) {
             ShowWindow(hWnd, SW_HIDE);
+            if (g_hTargetGame && IsWindow(g_hTargetGame)) {
+                HWND hGameIme = ImmGetDefaultIMEWnd(g_hTargetGame);
+                if (hGameIme) {
+                    SendMessageW(hGameIme, WM_IME_CONTROL, IMC_SETCONVERSIONMODE, 0);
+                    SendMessageW(hGameIme, WM_IME_CONTROL, IMC_SETOPENSTATUS, FALSE);
+                }
+                UpdateHotkeyState(g_hTargetGame);
+            }
         }
         break;
     }
@@ -431,7 +470,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             POINT curPoint;
             GetCursorPos(&curPoint);
             HMENU hMenu = CreatePopupMenu();
-            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, ID_TRAY_TITLE, L"그림던 한글 도우미 v1.5 (Stable)");
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, ID_TRAY_TITLE, L"그림던 한글 도우미 v1.6 (Stable)");
             AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
             AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT, L"종료 (&Exit)");
 
