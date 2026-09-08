@@ -1,12 +1,13 @@
 /**
  * Grim Dawn 한글 입력 도우미 (Grim Dawn Hangeul Helper)
  * 
- * [v1.6 타이밍 및 IME 완전 안정화 픽스]
- * 1. 게임 일시정지(Auto-Pause) 해제 안전 마진 확보 (Sleep 120ms 부여)
- * 2. 복귀 시 게임 창 IME를 영문(Alphanumeric)으로 강제 초기화하여 좌상단 고스트 입력기 원천 차단
- * 3. 창 복귀 즉시 단축키(한/영 키) 강제 재등록으로 다회 연속 호출 100% 보장
- * 4. 클립보드 복원 루틴 제거 및 하드웨어 스캔 코드(25ms) Ctrl + V 전송
- * 5. 게임 프로세스 종료 시 도우미 자동 종료
+ * [v1.6.1 컴파일러 누락 상수 정의 및 타이밍/IME 안정화 픽스]
+ * 1. 표준 imm.h에 누락된 IMC_SETCONVERSIONMODE(0x02), IMC_SETOPENSTATUS(0x06) 상수 명시적 선언
+ * 2. 게임 일시정지(Auto-Pause) 해제 안전 마진 확보 (Sleep 120ms 부여)
+ * 3. 복귀 시 게임 창 IME를 영문(Alphanumeric)으로 강제 초기화하여 좌상단 고스트 입력기 차단
+ * 4. 창 복귀 즉시 단축키(한/영 키) 강제 재등록으로 다회 연속 호출 100% 보장
+ * 5. 클립보드 복원 루틴 제거 및 하드웨어 스캔 코드(25ms) Ctrl + V 전송
+ * 6. 게임 프로세스 종료 시 도우미 자동 종료
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -22,6 +23,17 @@
 #pragma comment(lib, "imm32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
+// IME 내부 제어 메시지 상수 (표준 imm.h에 누락된 정의 보완)
+#ifndef WM_IME_CONTROL
+#define WM_IME_CONTROL          0x0283
+#endif
+#ifndef IMC_SETCONVERSIONMODE
+#define IMC_SETCONVERSIONMODE   0x0002
+#endif
+#ifndef IMC_SETOPENSTATUS
+#define IMC_SETOPENSTATUS       0x0006
+#endif
 
 // 식별자 정의
 #define HOTKEY_ID          1
@@ -210,7 +222,7 @@ void ForceHangeulMode(HWND hEdit) {
 
     HIMC hImc = ImmGetContext(hEdit);
     if (hImc) {
-        ImmSetOpenStatus(hImc, TRUE); // IME 창구 열기
+        ImmSetOpenStatus(hImc, TRUE); // IME 열기
 
         DWORD dwConversion = 0, dwSentence = 0;
         ImmGetConversionStatus(hImc, &dwConversion, &dwSentence);
@@ -280,11 +292,11 @@ void PasteTextToGame(const std::wstring& text) {
     Sleep(120);
 
     // 9. 다이렉트X 인식용 하드웨어 스캔 코드 + 시간 지연(25ms) Ctrl + V 전송
-    // Ctrl Down
+    // Ctrl Down (스캔 코드 0x1D)
     keybd_event(VK_CONTROL, 0x1D, 0, 0);
     Sleep(25);
 
-    // V Down
+    // V Down (스캔 코드 0x2F)
     keybd_event('V', 0x2F, 0, 0);
     Sleep(25);
 
@@ -470,7 +482,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             POINT curPoint;
             GetCursorPos(&curPoint);
             HMENU hMenu = CreatePopupMenu();
-            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, ID_TRAY_TITLE, L"그림던 한글 도우미 v1.6 (Stable)");
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, ID_TRAY_TITLE, L"그림던 한글 도우미 v1.6.1");
             AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
             AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT, L"종료 (&Exit)");
 
