@@ -9,7 +9,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
       - name: Compile
         run: |
-          cl.exe /O2 /MT /EHsc main.cpp /Fe:GrimDawnHangeulHelper.exe /link user32.lib gdi32.lib imm32.lib shell32.lib comctl32.lib /SUBSYSTEM:WINDOWS /MANIFESTUAC:"level='requireAdministrator'"
+          cl.exe /utf-8 /O2 /MT /EHsc main.cpp /Fe:GrimDawnHangeulHelper.exe /link user32.lib gdi32.lib imm32.lib shell32.lib comctl32.lib /SUBSYSTEM:WINDOWS /MANIFESTUAC:"level='requireAdministrator'"
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
