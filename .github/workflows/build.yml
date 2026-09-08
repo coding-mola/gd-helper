@@ -1,0 +1,17 @@
+name: Build EXE
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Compile
+        run: |
+          cl.exe /O2 /MT /EHsc main.cpp /Fe:GrimDawnHangeulHelper.exe /link user32.lib gdi32.lib imm32.lib shell32.lib comctl32.lib /SUBSYSTEM:WINDOWS /MANIFESTUAC:"level='requireAdministrator'"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GrimDawnHangeulHelper
+          path: GrimDawnHangeulHelper.exe
